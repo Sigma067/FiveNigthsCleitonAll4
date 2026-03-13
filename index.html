@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cleiton's Lab - Official Beta</title>
+    <style>
+        /* CSS INTEGRADO E BLINDADO */
+        body { 
+            background: #000; 
+            color: #fff; 
+            font-family: monospace; 
+            text-align: center; 
+            margin: 0; 
+            padding: 0;
+            overflow: hidden; /* Impede scroll */
+            user-select: none; /* Impede selecionar texto */
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent; /* Remove brilho azul ao tocar */
+        }
+
+        #game-container { 
+            width: 100vw; 
+            height: 100vh; 
+            max-width: 900px; 
+            max-height: 675px; 
+            margin: auto; 
+            position: relative; 
+            border: 2px solid #333; 
+            display: flex;
+            flex-direction: column;
+            background: #050505;
+        }
+
+        #hud { 
+            display: flex; 
+            justify-content: space-around; 
+            background: #111; 
+            padding: 10px; 
+            font-size: 1.1rem;
+            border-bottom: 1px solid #444;
+        }
+
+        #monitor { 
+            flex-grow: 1;
+            background-size: cover; 
+            background-position: center;
+            position: relative; 
+        }
+
+        #room-label {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.8);
+            padding: 5px 10px;
+            border: 1px solid #0f0;
+            color: #0f0;
+        }
+
+        /* Ajuste blindado para as imagens de sobreposição */
+        #cleiton-sprite, #mesa-sprite { 
+            position: absolute; 
+            width: 100%; 
+            height: 100%; 
+            top: 0; 
+            left: 0; 
+            pointer-events: none; 
+            object-fit: contain; /* Garante que Cleiton e Mesa não estiquem */
+        }
+
+        #cleiton-sprite { z-index: 5; }
+        #mesa-sprite { z-index: 10; }
+
+        #controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+            padding: 10px;
+            background: #111;
+        }
+
+        button { 
+            background: #222; 
+            color: white; 
+            border: 1px solid #555; 
+            padding: 12px; 
+            font-size: 1rem;
+            cursor: pointer;
+            font-family: monospace;
+        }
+
+        button:active { background: #444; }
+
+        #math-ui { 
+            position: absolute; 
+            top: 50%; 
+            left: 50%; 
+            transform: translate(-50%, -50%); 
+            background: #fff; 
+            color: #000; 
+            padding: 20px; 
+            z-index: 100; 
+            border: 4px solid #f00; 
+            width: 80%;
+        }
+
+        #math-answer { width: 80%; font-size: 20px; margin: 10px 0; }
+
+        .hidden { display: none !important; }
+        .door-alert { background: red !important; animation: blink 0.5s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+
+        #jumpscare-container { 
+            position: absolute; 
+            width: 100%; 
+            height: 100%; 
+            z-index: 1000; 
+            background: #000; 
+        }
+        #jumpscare-container img { width: 100%; height: 100%; object-fit: cover; }
+
+        .shake { animation: shake-anim 0.1s infinite; }
+        @keyframes shake-anim {
+            0% { transform: translate(1px, 1px); }
+            50% { transform: translate(-2px, -1px); }
+            100% { transform: translate(1px, 2px); }
+        }
+    </style>
+</head>
+<body>
+
+    <audio id="audio-trilha" src="musica_tensa.mp3" loop></audio>
+    <audio id="audio-jumpscare" src="gritos.mp3"></audio>
+
+    <div id="game-container">
+        <div id="hud">
+            <div>⚡ <span id="energy-val">100</span>%</div>
+            <div>🌙 <span id="night-val">1</span></div>
+            <div>⏰ <span id="clock-val">12</span>:00 AM</div>
+        </div>
+
+        <div id="monitor">
+            <div id="room-label">CAM 01</div>
+            <img id="cleiton-sprite" src="cleiton.png" class="hidden">
+            <img id="mesa-sprite" src="mesa.png" class="hidden">
+            
+            <div id="jumpscare-container" class="hidden shake">
+                <img src="cleiton_jumpscare.png">
+            </div>
+
+            <div id="math-ui" class="hidden">
+                <div id="math-question"></div>
+                <input type="number" id="math-answer" inputmode="numeric">
+                <br>
+                <button onclick="checkMath()">CONFIRMAR</button>
+            </div>
+        </div>
+
+        <div id="controls">
+            <button onclick="changeRoom('corredor')">CAM 01 (Corredor)</button>
+            <button onclick="changeRoom('lab')">CAM 02 (Laboratório)</button>
+            <button onclick="changeRoom('biblioteca')">CAM 03 (Biblioteca)</button>
+            <button id="door-btn" onclick="triggerMathTask()">PORTA</button>
+        </div>
+    </div>
+
+    <script>
+        /* JAVASCRIPT INTEGRADO - Lógica de Noites e Cleiton */
+        let currentNight = parseInt(localStorage.getItem('cleitonNight')) || 1;
+        let energy = 100, clock = 12, gameActive = true, cleitonLocation = 'none', doorClosed = false, currentCorrectAnswer = 0, deathTimer = null;
+        let trilhaIniciada = false;
+
+        const rooms = {
+            'corredor': 'corredor_fundo.png',
+            'lab': 'lab_fundo.png',
+            'biblioteca': 'biblioteca_fundo.png'
+        };
+
+        function gerenciarSons() {
+            if (!trilhaIniciada) {
+                const trilha = document.getElementById('audio-trilha');
+                trilha.volume = 0.3;
+                trilha.play().catch(e => console.log("Aguardando interação do usuário"));
+                trilhaIniciada = true;
+            }
+        }
+
+        function changeRoom(room) {
+            if (!gameActive) return;
+            gerenciarSons();
+            energy -= 1;
+            updateEnergy();
+            document.getElementById('room-label').innerText = room.toUpperCase();
+            document.getElementById('monitor').style.backgroundImage = `url('${rooms[room]}')`;
+            document.getElementById('cleiton-sprite').classList.toggle('hidden', cleitonLocation !== room);
+            document.getElementById('mesa-sprite').classList.toggle('hidden', room !== 'lab');
+        }
+
+        function triggerMathTask() {
+            if (!gameActive || doorClosed) return;
+            gerenciarSons();
+            document.getElementById('math-question').innerText = `DESAFIO: ${generateMathProblem()}`;
+            document.getElementById('math-ui').classList.remove('hidden');
+            document.getElementById('math-answer').value = "";
+            document.getElementById('math-answer').focus();
+        }
+
+        function generateMathProblem() {
+            let n1, n2, txt;
+            switch(currentNight) {
+                case 1: n1 = Math.floor(Math.random()*100); n2 = Math.floor(Math.random()*100); currentCorrectAnswer = n1+n2; txt = `${n1}+${n2}`; break;
+                case 2: n1 = Math.floor(Math.random()*100); n2 = Math.floor(Math.random()*50); currentCorrectAnswer = n1-n2; txt = `${n1}-${n2}`; break;
+                case 3: n1 = Math.floor(Math.random()*10)+1; n2 = Math.floor(Math.random()*10)+1; currentCorrectAnswer = n1*n2; txt = `${n1}x${n2}`; break;
+                default: n1 = Math.floor(Math.random()*20); n2 = Math.floor(Math.random()*20); currentCorrectAnswer = n1+n2; txt = `${n1}+${n2}`; break;
+            }
+            return txt;
+        }
+
+        function checkMath() {
+            const val = parseInt(document.getElementById('math-answer').value);
+            if (val === currentCorrectAnswer) {
+                energy -= 10;
+                updateEnergy();
+                doorClosed = true;
+                cleitonLocation = 'none';
+                clearTimeout(deathTimer);
+                document.getElementById('door-btn').classList.remove('door-alert');
+                document.getElementById('door-btn').innerText = "TRANCADA";
+                setTimeout(() => {
+                    doorClosed = false;
+                    document.getElementById('door-btn').innerText = "PORTA";
+                }, 5000);
+            } 
+            document.getElementById('math-ui').classList.add('hidden');
+        }
+
+        function moveCleiton() {
+            if (!gameActive || doorClosed) return;
+            const path = ['none', 'lab', 'biblioteca', 'corredor', 'at_door'];
+            cleitonLocation = path[path.indexOf(cleitonLocation) + 1] || 'at_door';
+            
+            // Atualiza visual se o jogador estiver na câmera certa
+            const currentRoom = document.getElementById('room-label').innerText.toLowerCase();
+            document.getElementById('cleiton-sprite').classList.toggle('hidden', cleitonLocation !== currentRoom);
+
+            if (cleitonLocation === 'at_door') {
+                document.getElementById('door-btn').classList.add('door-alert');
+                deathTimer = setTimeout(() => { if (!doorClosed && gameActive) triggerJumpscare(); }, 6000);
+            }
+        }
+
+        function triggerJumpscare() {
+            gameActive = false;
+            const grito = document.getElementById('audio-jumpscare');
+            grito.volume = 1.0;
+            grito.play();
+            document.getElementById('audio-trilha').pause();
+            document.getElementById('jumpscare-container').classList.remove('hidden');
+            setTimeout(() => {
+                localStorage.setItem('cleitonNight', 1);
+                location.reload();
+            }, 2000);
+        }
+
+        function updateEnergy() {
+            document.getElementById('energy-val').innerText = Math.max(0, energy);
+            if (energy <= 0 && gameActive) triggerJumpscare();
+        }
+
+        // Inicialização
+        document.getElementById('monitor').style.backgroundImage = `url('${rooms['corredor']}')`;
+        document.getElementById('night-val').innerText = currentNight >= 6 ? "6(EXTRA)" : currentNight;
+        
+        setInterval(moveCleiton, 10000);
+        setInterval(() => { 
+            if (!gameActive) return;
+            clock = (clock % 12) + 1;
+            document.getElementById('clock-val').innerText = clock;
+            if (clock === 6) { 
+                gameActive = false;
+                localStorage.setItem('cleitonNight', currentNight + 1);
+                alert("6 AM - SOBREVIVEU!");
+                location.reload(); 
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
